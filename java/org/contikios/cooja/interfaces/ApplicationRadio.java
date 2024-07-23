@@ -32,6 +32,8 @@ package org.contikios.cooja.interfaces;
 
 import java.awt.BorderLayout;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.function.BiConsumer;
 import javax.swing.Box;
 import javax.swing.JButton;
@@ -64,9 +66,12 @@ public class ApplicationRadio extends Radio implements NoiseSourceRadio, Directi
   private RadioPacket packetFromMote;
   private RadioPacket packetToMote;
 
-  private boolean isTransmitting;
-  private boolean isReceiving;
-  private boolean isInterfered;
+  // private boolean isTransmitting;
+  // private boolean isReceiving;
+  // private boolean isInterfered;
+  private Map<Integer, Boolean> isTransmittingMap = new HashMap<>();
+  private Map<Integer, Boolean> isReceivingMap = new HashMap<>();
+  private Map<Integer, Boolean> isInterferedMap = new HashMap<>();
 
   private static final long transmissionEndTime = 0;
 
@@ -75,10 +80,12 @@ public class ApplicationRadio extends Radio implements NoiseSourceRadio, Directi
 
   private double signalStrength = -100;
   private int radioChannel = -1;
+  private boolean listenOnAllChannels = false;
   private double outputPower; /* typical cc2420 values: -25 <-> 0 dBm */
   private int outputPowerIndicator = 100;
 
-  private int interfered;
+  // private int interfered;
+  private Map<Integer, Integer> interferedMap = new HashMap<>();
 
   public ApplicationRadio(Mote mote) {
     this.mote = mote;
@@ -109,38 +116,37 @@ public class ApplicationRadio extends Radio implements NoiseSourceRadio, Directi
       interfereAnyReception();
       return;
     }
-
-    isReceiving = true;
+  
+    isReceivingMap.put(getChannel(), true);
     lastEventTime = simulation.getSimulationTime();
     lastEvent = RadioEvent.RECEPTION_STARTED;
     radioEventTriggers.trigger(RadioEvent.RECEPTION_STARTED, this);
-  }
+  }  
 
   @Override
   public void signalReceptionEnd() {
-    //System.out.println("SignalReceptionEnded for node: " + mote.getID() + " intf:" + interfered);
+    int channel = getChannel();
     if (isInterfered() || packetToMote == null) {
-      interfered--;
-      if (interfered == 0) isInterfered = false;
-      if (interfered < 0) {
-        isInterfered = false;
-        //logger.warn("Interfered got lower than 0!!!");
-        interfered = 0;
+      interferedMap.put(channel, interferedMap.getOrDefault(channel, 0) - 1);
+      if (interferedMap.get(channel) == 0) isInterferedMap.put(channel, false);
+      if (interferedMap.get(channel) < 0) {
+        isInterferedMap.put(channel, false);
+        interferedMap.put(channel, 0);
       }
       packetToMote = null;
-      if (interfered > 0) return;
+      if (interferedMap.get(channel) > 0) return;
     }
-
-    isReceiving = false;
+  
+    isReceivingMap.put(channel, false);
     lastEventTime = simulation.getSimulationTime();
     lastEvent = RadioEvent.RECEPTION_FINISHED;
     radioEventTriggers.trigger(RadioEvent.RECEPTION_FINISHED, this);
   }
-
+ 
   @Override
   public boolean isTransmitting() {
-    return isTransmitting;
-  }
+    return isTransmittingMap.getOrDefault(getChannel(), false);
+  }  
 
   public long getTransmissionEndTime() {
     return transmissionEndTime;
@@ -148,7 +154,7 @@ public class ApplicationRadio extends Radio implements NoiseSourceRadio, Directi
 
   @Override
   public boolean isReceiving() {
-    return isReceiving;
+    return isReceivingMap.getOrDefault(getChannel(), false);
   }
 
   @Override
@@ -169,9 +175,10 @@ public class ApplicationRadio extends Radio implements NoiseSourceRadio, Directi
   /* Note: this must be called exactly as many times as the reception ended */
   @Override
   public void interfereAnyReception() {
-    interfered++;
+    int channel = getChannel();
+    interferedMap.put(channel, interferedMap.getOrDefault(channel, 0) + 1);
     if (!isInterfered()) {
-      isInterfered = true;
+      isInterferedMap.put(channel, true);
 
       lastEvent = RadioEvent.RECEPTION_INTERFERED;
       lastEventTime = simulation.getSimulationTime();
@@ -179,9 +186,10 @@ public class ApplicationRadio extends Radio implements NoiseSourceRadio, Directi
     }
   }
 
+
   @Override
   public boolean isInterfered() {
-    return isInterfered;
+    return isInterferedMap.getOrDefault(getChannel(), false);
   }
 
   @Override
@@ -219,13 +227,14 @@ public class ApplicationRadio extends Radio implements NoiseSourceRadio, Directi
    */
   public void startTransmittingPacket(final RadioPacket packet, final long duration) {
     assert simulation.isSimulationThread() : "Method must be called from the simulation thread";
-    if (isTransmitting) {
-      logger.warn("Already transmitting, aborting new transmission");
+    int channel = getChannel();
+    if (isTransmittingMap.getOrDefault(channel, false)) {
+      logger.warn("Already transmitting on channel " + channel + ", aborting new transmission");
       return;
     }
 
     // Start transmission.
-    isTransmitting = true;
+    isTransmittingMap.put(channel, true);
     lastEvent = RadioEvent.TRANSMISSION_STARTED;
     lastEventTime = simulation.getSimulationTime();
     radioEventTriggers.trigger(RadioEvent.TRANSMISSION_STARTED, this);
@@ -239,7 +248,7 @@ public class ApplicationRadio extends Radio implements NoiseSourceRadio, Directi
     simulation.scheduleEvent(new MoteTimeEvent(mote) {
       @Override
       public void execute(long t) {
-        isTransmitting = false;
+        isTransmittingMap.put(channel, false);
         lastEvent = RadioEvent.TRANSMISSION_FINISHED;
         lastEventTime = t;
         radioEventTriggers.trigger(RadioEvent.TRANSMISSION_FINISHED, ApplicationRadio.this);
@@ -265,10 +274,21 @@ public class ApplicationRadio extends Radio implements NoiseSourceRadio, Directi
    * @param channel New radio channel
    */
   public void setChannel(int channel) {
-    radioChannel = channel;
+    // System.out.println(getMote().getID() + " changing channel: " + radioChannel + " -> " + channel);
+    if (channel == -1) {
+      listenOnAllChannels = true;
+    } else {
+      listenOnAllChannels = false;
+      radioChannel = channel;
+    }
+
     lastEvent = RadioEvent.UNKNOWN;
     lastEventTime = simulation.getSimulationTime();
     radioEventTriggers.trigger(RadioEvent.UNKNOWN, this);
+  }
+
+  public boolean isListeningOnAllChannels() {
+    return listenOnAllChannels;
   }
 
   @Override
