@@ -28,9 +28,12 @@ public class Peer2PeerMote extends AbstractApplicationMote {
   private ApplicationRadio radio;
   private Random rd;
 
-  private static final long TRANSMISSION_DURATION = Simulation.MILLISECOND*5;  // UDP broadcast time: 5ms
+  private static final long TRANSMISSION_DURATION = Simulation.MICROSECOND*300;  // UDP broadcast time: 300μs
   private static final long SEND_INTERVAL = Simulation.MILLISECOND*1000*60;  // Send request every 60 seconds
   private static final long MS = Simulation.MILLISECOND;
+  private static final long US = Simulation.MICROSECOND;
+  private static final int PROCESS_DELAY_MEAN = 100;
+  private static final int PROCESS_DELAY_UNCERTAINTY = 20;
   private static final int MAX_CHANNELS = 3;
   private static final int TTL = 1000;
   private static final int LOG_LENGTH = 40;
@@ -51,14 +54,19 @@ public class Peer2PeerMote extends AbstractApplicationMote {
   }
   
 
-  protected void execute(long time) {
-    // System.out.println("Mote " + getID() + " execute() function called");
+  protected void execute(long time) {    
     if (radio == null) {
       radio = (ApplicationRadio) getInterfaces().getRadio();
       rd = getSimulation().getRandomGenerator();
     }
 
-    schedulePeriodicPacket(1000*MS*getID());
+    // if (getID() != 1) {
+    //   radio.setChannel(getID());
+    // }
+
+    if (getID() == 1) {
+      schedulePeriodicPacket(1000*MS);
+    }
   }
 
   
@@ -80,7 +88,8 @@ public class Peer2PeerMote extends AbstractApplicationMote {
       String messageID = messageNum + "|" + originNode + "|" + attestNode;
       String logMsg = "Rx: '" + messageID + "|" + messageData + "' from node: '" + fromNode + "'";
       logf(logMsg, null, radio.getChannel());
-      
+      int processingDelay = generateRandomDelay(PROCESS_DELAY_MEAN, PROCESS_DELAY_UNCERTAINTY);
+
       // Handle duplicate packets
       if (msgCache.containsKey(messageID)) {
         // logf(logMsg, "duplicate", null);
@@ -91,7 +100,7 @@ public class Peer2PeerMote extends AbstractApplicationMote {
       
       // Handle incomming attestations
       if (attestNode != 0 && originNode != getID()) {        
-        scheduleBroadcastPacket(messageID, messageData, TTL, 1, Action.RELAY_ATTESTATION);
+        scheduleBroadcastPacket(messageID, messageData, TTL, processingDelay, Action.RELAY_ATTESTATION);
         return;
       }
       else if (attestNode != 0) {
@@ -100,8 +109,8 @@ public class Peer2PeerMote extends AbstractApplicationMote {
       }
       
       // Handle incomming messages and generate attestation
-      scheduleBroadcastPacket(messageID, messageData, TTL, 1, Action.RELAY_MESSAGE);
-      scheduleBroadcastPacket(messageNum + "|" + originNode + "|" + getID(), 0, TTL, 1, Action.BROADCAST_ATTESTATION);
+      scheduleBroadcastPacket(messageID, messageData, TTL, processingDelay, Action.RELAY_MESSAGE);
+      scheduleBroadcastPacket(messageNum + "|" + originNode + "|" + getID(), 0, TTL, processingDelay, Action.BROADCAST_ATTESTATION);
 
     } catch (NumberFormatException e) {
       System.out.println("Mote " + getID() + " received bad data: " + e);
@@ -122,7 +131,7 @@ public class Peer2PeerMote extends AbstractApplicationMote {
 
   private void scheduleBroadcastPacket(String messageID, long messageData, int ttl, int timeOffset, Action action) {
     if (ttl <= 0) {
-      System.out.println(formatTime(getSimulation().getSimulationTimeMillis()) + "  ID " + getID() + ": TTL expired for " + messageID);
+      System.out.println(formatTimeMicro(getSimulation().getSimulationTime()) + "  ID " + getID() + ": TTL expired for " + messageID);
       return;
     }
   
@@ -131,15 +140,15 @@ public class Peer2PeerMote extends AbstractApplicationMote {
       public void execute(long t) {
         if (!attemptBroadcast(messageID, messageData, ttl, action)) {
           logf("Fx: '" + messageID + "|" + messageData, "rescheduled", null);
-          scheduleBroadcastPacket(messageID, messageData, ttl, 1, action);
+          scheduleBroadcastPacket(messageID, messageData, ttl, 100, action);
         }
       }
-    }, getSimulation().getSimulationTime() + timeOffset * MS);
+    }, getSimulation().getSimulationTime() + timeOffset * US);
   }
 
   
   private boolean attemptBroadcast(String messageID, long messageData, int ttl, Action action) {
-    logf(radio.getChannel() + " " + radio.isTransmitting() + " " + radio.isReceiving() + " " + radio.isInterfered(), null, null);
+    // logf(radio.getChannel() + " " + radio.isTransmitting() + " " + radio.isReceiving() + " " + radio.isInterfered(), null, null);
     if (!radio.isTransmitting() && !radio.isReceiving() && !radio.isInterfered()) {
       
       switch (action) {
@@ -166,7 +175,7 @@ public class Peer2PeerMote extends AbstractApplicationMote {
       }
     
       radio.startTransmittingPacket(new COOJARadioPacket((messageID + "|" + messageData + "|" + getID()).getBytes(StandardCharsets.UTF_8)), TRANSMISSION_DURATION);
-        scheduleChannelReset();
+        // scheduleChannelReset();
         return true;
 
     }
@@ -174,39 +183,37 @@ public class Peer2PeerMote extends AbstractApplicationMote {
   }
 
   
-  private void scheduleChannelReset() {
-    getSimulation().scheduleEvent(new MoteTimeEvent(Peer2PeerMote.this) {
-      @Override
-      public void execute(long t) {
-        logf("Changing channel: " + radio.getChannel() + " -> " + -1, null, null);
-        radio.setChannel(-1);
-      }
-    }, getSimulation().getSimulationTime() + TRANSMISSION_DURATION);
-  }
+  // private void scheduleChannelReset() {
+  //   getSimulation().scheduleEvent(new MoteTimeEvent(Peer2PeerMote.this) {
+  //     @Override
+  //     public void execute(long t) {
+  //       logf("Changing channel: " + radio.getChannel() + " -> " + -1, null, null);
+  //       radio.setChannel(-1);
+  //     }
+  //   }, getSimulation().getSimulationTime() + TRANSMISSION_DURATION);
+  // }
   
   
   private void logf(String logMsg, String actionMsg, Integer channel) {
     String log;
     if (actionMsg != null) {
-        log = String.format("%-" + LOG_LENGTH + "s", logMsg) + " -> " + actionMsg;
+      log = String.format("%-" + LOG_LENGTH + "s", logMsg) + " -> " + actionMsg;
     } else {
-        log = String.format("%-" + (LOG_LENGTH + ACTION_LENGTH) + "s", logMsg);
+      log = String.format("%-" + (LOG_LENGTH + ACTION_LENGTH) + "s", logMsg);
     }
     if (channel != null) {
-        log = String.format("%-" + (LOG_LENGTH + ACTION_LENGTH) + "s", log) + " Channel: " + channel;
+      log = String.format("%-" + (LOG_LENGTH + ACTION_LENGTH) + "s", log) + " Channel: " + channel;
     }
     log(log);
     System.out.println(
-        String.format(
-            "%-" + LOGTIME_LENGTH + "s", formatTime(getSimulation().getSimulationTimeMillis()) + "  ID: " + getID()
-        ) + "  " + log
+      String.format(
+          "%-" + LOGTIME_LENGTH + "s", formatTimeMicro(getSimulation().getSimulationTime()) + "  ID: " + getID()
+      ) + "  " + log
     );
-}
+  }
 
 
-
-
-  public static String formatTime(long milliseconds) {
+  public static String formatTimeMilli(long milliseconds) {
     long mins = milliseconds / 60000;
     long secs = (milliseconds % 60000) / 1000;
     long millis = milliseconds % 1000;
@@ -215,6 +222,27 @@ public class Peer2PeerMote extends AbstractApplicationMote {
     String paddedMillis = String.format("%03d", millis);
 
     return mins + ":" + paddedSecs + "." + paddedMillis;
+  }
+
+
+  public static String formatTimeMicro(long microseconds) {
+    long mins = microseconds / 60000000;
+    long secs = (microseconds % 60000000) / 1000000;
+    long millis = (microseconds % 1000000) / 1000;
+    long micros = microseconds % 1000;
+
+    String paddedSecs = String.format("%02d", secs);
+    String paddedMillis = String.format("%03d", millis);
+    String paddedMicros = String.format("%03d", micros);
+
+    return mins + ":" + paddedSecs + "." + paddedMillis + "," + paddedMicros;
+  }
+
+
+  public int generateRandomDelay(int mean, int uncertainty) {
+    int lowerBound = mean - uncertainty;
+    int upperBound = mean + uncertainty;
+    return rd.nextInt(upperBound - lowerBound + 1) + lowerBound;
   }
 
 
