@@ -1,4 +1,4 @@
-TIMEOUT(600000);
+TIMEOUT(64000);
 
 function formatTime(microseconds) {
     let milliseconds = Math.floor(microseconds / 1000);
@@ -25,12 +25,11 @@ var simulationTitle;
 try {
     simulationTitle = sim.getTitle();
 } catch (e) {
-    simulationTitle = "default_simultion";
+    simulationTitle = "default_simulation";
 }
 
 var logFilePath = "../../simulations/" + simulationTitle + "_log.txt";
 var logFile = new java.io.FileWriter(logFilePath);
-
 
 while (true) {
     let logMessage = formatTime(time) + "  ID:" + id + "  " + msg + "\n";
