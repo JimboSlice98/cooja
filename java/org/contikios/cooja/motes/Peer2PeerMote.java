@@ -8,6 +8,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.Arrays;
 import java.util.Random;
+import java.util.Collections;
 
 import org.contikios.cooja.AbstractionLevelDescription;
 import org.contikios.cooja.COOJARadioPacket;
@@ -35,13 +36,13 @@ public class Peer2PeerMote extends AbstractApplicationMote {
 
   private static final long TRANSMISSION_DURATION = Simulation.MICROSECOND*300;  // Packet broadcast time: 300 μs
   private static final long REQUEST_INTERVAL = Simulation.MILLISECOND*1000*60;   // Send request every 5 minutes
-  private static final long ATTEST_INTERVAL = TRANSMISSION_DURATION*100;         // How long to wait before combining attestation signatures
+  private static final long ATTEST_INTERVAL = TRANSMISSION_DURATION*10;          // How long to wait before combining attestation signatures (~5)
+  private static final long MOTE_OFFSET = Simulation.MILLISECOND*1000;           // Each motes request will be offset by this time
   private static final long MS = Simulation.MILLISECOND;
   private static final long US = Simulation.MICROSECOND;
-  private static final int PROCESS_DELAY_MEAN = 60;         // Mean processing delay
-  private static final int PROCESS_DELAY_UNCERTAINTY = 20;  // Processing delay uncertainty
+
+  private static final int MAX_RETRIES = 10;
   private static final int MAX_CHANNELS = 3;
-  private static final int TTL = 1000;
   private static final int LOG_LENGTH = 40;
   private static final int LOGTIME_LENGTH = 25;
   private static final int ACTION_LENGTH = 30;
@@ -71,8 +72,9 @@ public class Peer2PeerMote extends AbstractApplicationMote {
       rd = getSimulation().getRandomGenerator();
     }
         
-    schedulePeriodicPacket(REQUEST_INTERVAL, MS*1000*2*getID(), Type.REQUEST);
+    schedulePeriodicPacket(REQUEST_INTERVAL, MS*1000*getID(), Type.REQUEST);
     schedulePeriodicPacket(ATTEST_INTERVAL, 0, Type.ATTESTATION);
+    scheduleCacheRefresh();
   }
 
 
@@ -84,7 +86,7 @@ public class Peer2PeerMote extends AbstractApplicationMote {
         if (messageType == Type.REQUEST) {
           data = generatePacketData(messageType);
         }
-        scheduleBroadcastPacket(data, 0, 0, messageType);
+        scheduleBroadcastPacket(data, MAX_RETRIES, 0, messageType);
         schedulePeriodicPacket(sendInterval, 0, messageType);
       }
     }, getSimulation().getSimulationTime() + sendInterval + timeOffset);
@@ -109,6 +111,17 @@ public class Peer2PeerMote extends AbstractApplicationMote {
   }
 
 
+  private void scheduleCacheRefresh() {
+    getSimulation().scheduleEvent(new MoteTimeEvent(this) {
+      @Override
+      public void execute(long t) {
+        messageCache.clear();
+        scheduleCacheRefresh();
+      }
+    }, getSimulation().getSimulationTime() + MOTE_OFFSET*5);
+  }
+
+
   @Override
   public void receivedPacket(RadioPacket p) {
     String data = new String(p.getPacketData(), java.nio.charset.StandardCharsets.UTF_8);    
@@ -127,10 +140,8 @@ public class Peer2PeerMote extends AbstractApplicationMote {
         long messageNum = Long.parseLong(parts[0]);
         int originNode = Integer.parseInt(parts[1]);
         int attestNode = Integer.parseInt(parts[2]);
-        String messageID = messageNum + "|" + originNode + "|" + attestNode;
-
-        int processingDelay = generateRandomDelay(PROCESS_DELAY_MEAN, PROCESS_DELAY_UNCERTAINTY);
-
+        String messageID = messageNum + "|" + originNode + "|" + attestNode;        
+      
         // Handle duplicate packets
         if (messageCache.contains(messageID)) {
           // logf(logMessage, "DUPLICATE", null);
@@ -168,7 +179,7 @@ public class Peer2PeerMote extends AbstractApplicationMote {
 
 
   private void scheduleBroadcastPacket(String data, int ttl, int timeOffset, Type messageType) {
-    if (messageType == Type.ATTESTATION && attestationBuffer.isEmpty()) {
+    if (ttl < 0 || (messageType == Type.ATTESTATION && attestationBuffer.isEmpty())) {
       return;
     }
 
@@ -180,7 +191,7 @@ public class Peer2PeerMote extends AbstractApplicationMote {
         if (!radio.isTransmitting() && !radio.isReceiving() && !radio.isInterfered()) {
           switch (messageType) {
             case REQUEST:
-              logf("Tx: " + "'" + dataHolder.data + "'", messageType.toString(), ttl);  
+              logf("Tx: " + "'" + dataHolder.data + "'", messageType.toString(), null);
               messageCache.add(dataHolder.data);
               txCount++;
               break;
@@ -196,8 +207,13 @@ public class Peer2PeerMote extends AbstractApplicationMote {
           }
 
           radio.startTransmittingPacket(new COOJARadioPacket((dataHolder.data + "," + getID()).getBytes(StandardCharsets.UTF_8)), TRANSMISSION_DURATION);
+          
+          if (messageType == Type.REQUEST) {
+            scheduleBroadcastPacket(data, ttl - 1, 100, messageType);
+          }
+
         } else {
-          scheduleBroadcastPacket(dataHolder.data, ttl + 1, 100, messageType);
+          scheduleBroadcastPacket(dataHolder.data, ttl, 100, messageType);
         }
       }
     }, getSimulation().getSimulationTime() + timeOffset * US);

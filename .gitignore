@@ -1,6 +1,7 @@
 .gradle
 .gradle_home
 *~
+*.hprof
 build
 /dist
 /javadoc
