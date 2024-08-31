@@ -84,8 +84,8 @@
          0x01, 0x02, 0x03, 0x04, 0x05
      });
      //private final static long DELAY = Simulation.MILLISECOND/5;
-     private final static long DELAY = Simulation.MILLISECOND;
-     private final static long DURATION = 100*Simulation.MILLISECOND;
+     private final static long DELAY = Simulation.MICROSECOND*1000;
+     private final static long DURATION = Simulation.MICROSECOND*1000;
      
      DisturberMote(MoteType moteType, Simulation simulation) throws MoteTypeCreationException {
        super(moteType, simulation);

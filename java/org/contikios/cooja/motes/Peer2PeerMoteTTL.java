@@ -24,12 +24,12 @@ import org.contikios.cooja.motes.DisturberMoteType.DisturberMote;
  * @author James Helsby
  */
 
-public class Peer2PeerMote extends AbstractApplicationMote {
+public class Peer2PeerMoteTTL extends AbstractApplicationMote {
   private ApplicationRadio radio;
   private Random rd;
 
   private static final long TRANSMISSION_DURATION = Simulation.MICROSECOND*300;  // Packet broadcast time: 300 μs
-  private static final long SEND_INTERVAL = Simulation.MILLISECOND*1000*600;      // Send request every 60 seconds
+  private static final long SEND_INTERVAL = Simulation.MILLISECOND*1000*60;      // Send request every 60 seconds
   private static final long REQUEST_INTERVAL = Simulation.MILLISECOND*1000*60;   // Send request every 60 seconds
   
   private static final long MOTE_OFFSET = Simulation.MILLISECOND*1000;           // Each motes request will be offset by this time
@@ -39,13 +39,13 @@ public class Peer2PeerMote extends AbstractApplicationMote {
   private static final int PROCESS_DELAY_MEAN = 600;
   private static final int PROCESS_DELAY_UNCERTAINTY = 500;
 
-  private static final int TTL = 1000;
+  private static final int TTL = 8;
   private static final int LOG_LENGTH = 40;
   private static final int LOGTIME_LENGTH = 20;
   private static final int ACTION_LENGTH = 30;
 
   private long txCount = 0;
-  private Map<String, Long> messageCache = new HashMap<>();
+  private Map<String, String> messageCache = new HashMap<>();
 
   public enum Action {
     BROADCAST_MESSAGE,
@@ -55,7 +55,7 @@ public class Peer2PeerMote extends AbstractApplicationMote {
   }
 
 
-  public Peer2PeerMote(MoteType moteType, Simulation simulation) throws MoteType.MoteTypeCreationException {
+  public Peer2PeerMoteTTL(MoteType moteType, Simulation simulation) throws MoteType.MoteTypeCreationException {
     super(moteType, simulation);
   }
   
@@ -97,40 +97,37 @@ public class Peer2PeerMote extends AbstractApplicationMote {
       long messageNum = Long.parseLong(parts[0]);
       int originNode = Integer.parseInt(parts[1]);
       int attestNode = Integer.parseInt(parts[2]);
-      long messageData = Long.parseLong(parts[3]);
+      int ttl = Integer.parseInt(parts[3]) - 1;
       int fromNode = Integer.parseInt(parts[4]);
 
       String messageID = messageNum + "|" + originNode + "|" + attestNode;
-      String logMsg = "Rx: '" + messageID + "|" + messageData + "' from node: '" + fromNode + "'";
+      String logMsg = "Rx: '" + messageID + "' from node: '" + fromNode + "' with ttl: '" + ttl + "'";
       // logf(logMsg, null);
 
       int processingDelay = generateRandomDelay(PROCESS_DELAY_MEAN, PROCESS_DELAY_UNCERTAINTY);
       processingDelay = 0;
 
-      // Handle duplicate packets
-      if (messageCache.containsKey(messageID)) {
-        // logf(logMsg, "duplicate", null);
-        return;
-      } else {
-        if (attestNode == 0) {
-          logf(logMsg, null);
-        }
-        messageCache.put(messageID, messageData);
+      if (attestNode == 0) {
+        // logf(logMsg, null);
       }
       
-      // Handle incomming attestations
       if (attestNode != 0 && originNode != getID()) {        
-        scheduleBroadcastPacket(messageID, messageData, TTL, processingDelay, Action.RELAY_ATTESTATION);
+        scheduleBroadcastPacket(messageID, ttl, processingDelay, Action.RELAY_ATTESTATION);
         return;
       }
       else if (attestNode != 0) {
-        logf(logMsg, "attestation received");
-        return;
+        if (messageCache.containsKey(messageID)) {
+        }
+        else {
+          messageCache.put(messageID, "0");
+          logf(logMsg, "attestation received");
+        }
+        return;        
       }
       
       // Handle incomming messages and generate attestation
-      scheduleBroadcastPacket(messageID, messageData, TTL, processingDelay, Action.RELAY_MESSAGE);
-      scheduleBroadcastPacket(messageNum + "|" + originNode + "|" + getID(), 0, TTL, processingDelay, Action.BROADCAST_ATTESTATION);
+      scheduleBroadcastPacket(messageID, ttl, processingDelay, Action.RELAY_MESSAGE);
+      scheduleBroadcastPacket(messageNum + "|" + originNode + "|" + getID(), TTL, processingDelay, Action.BROADCAST_ATTESTATION);
 
     } catch (NumberFormatException e) {
       System.out.println("Mote " + getID() + " received bad data: " + e);
@@ -142,46 +139,42 @@ public class Peer2PeerMote extends AbstractApplicationMote {
     getSimulation().scheduleEvent(new MoteTimeEvent(this) {
       @Override
       public void execute(long t) {        
-        scheduleBroadcastPacket(txCount + "|" + getID() + "|" + 0, 0, TTL, 0, Action.BROADCAST_MESSAGE);
+        scheduleBroadcastPacket(txCount + "|" + getID() + "|" + 0, TTL, 0, Action.BROADCAST_MESSAGE);
         schedulePeriodicPacket(0);
       }
     }, getSimulation().getSimulationTime() + SEND_INTERVAL + timeOffset);
   }
 
 
-  private void scheduleBroadcastPacket(String messageID, long messageData, int ttl, int timeOffset, Action action) {
+  private void scheduleBroadcastPacket(String messageID, int ttl, int timeOffset, Action action) {
     if (ttl <= 0) {
-      System.out.println(formatTimeMicro(getSimulation().getSimulationTime()) + "  ID " + getID() + ": TTL expired for " + messageID);
+      // System.out.println(formatTimeMicro(getSimulation().getSimulationTime()) + "  ID " + getID() + ": TTL expired for " + messageID);
       return;
     }
   
     getSimulation().scheduleEvent(new MoteTimeEvent(this) {
       @Override
       public void execute(long t) {
-        if (!attemptBroadcast(messageID, messageData, ttl, action)) {
+        if (!attemptBroadcast(messageID, ttl, action)) {
           // logf("Fx: '" + messageID + "|" + messageData, "rescheduled");
-          scheduleBroadcastPacket(messageID, messageData, ttl, 100, action);
+          scheduleBroadcastPacket(messageID, ttl, 100, action);
         }
       }
     }, getSimulation().getSimulationTime() + timeOffset * US);
   }
 
   
-  private boolean attemptBroadcast(String messageID, long messageData, int ttl, Action action) {    
+  private boolean attemptBroadcast(String messageID, int ttl, Action action) {    
     if (!radio.isTransmitting() && !radio.isReceiving() && !radio.isInterfered()) {
       
       switch (action) {
         case BROADCAST_MESSAGE:
-          messageData = getSimulation().getSimulationTime();
-          logf("Tx: " + "'" + messageID + "'", null);
-          messageCache.put(messageID, messageData);
+          logf("Tx: " + "'" + messageID + "' with ttl: " + ttl + "'", null);
           txCount++;
           break;
         
         case BROADCAST_ATTESTATION:
-          messageData = getSimulation().getSimulationTime();
           // logf("Ax: '" + messageID + "|" + messageData, null);
-          messageCache.put(messageID, messageData);
           break;
     
         case RELAY_MESSAGE:
@@ -193,7 +186,7 @@ public class Peer2PeerMote extends AbstractApplicationMote {
           System.out.println("handleBroadcastAction() error");
       }
     
-      radio.startTransmittingPacket(new COOJARadioPacket((messageID + "|" + messageData + "|" + getID()).getBytes(StandardCharsets.UTF_8)), TRANSMISSION_DURATION);
+      radio.startTransmittingPacket(new COOJARadioPacket((messageID + "|" + ttl + "|" + getID()).getBytes(StandardCharsets.UTF_8)), TRANSMISSION_DURATION);
       return true;
     }
     return false;

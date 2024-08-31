@@ -4,3 +4,6 @@
 build
 /dist
 /javadoc
+/bin
+COOJA.testlog
+*.hprof
