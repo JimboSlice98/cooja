@@ -39,7 +39,7 @@ public class Peer2PeerMoteBLS extends AbstractApplicationMote {
   private static boolean isInitialized = false;
 
   private static final long TRANSMISSION_DURATION = Simulation.MICROSECOND*300;  // Packet broadcast time: 300 μs
-  private static final long REQUEST_INTERVAL = Simulation.MILLISECOND*1000*60;   // Send request every 5 minutes
+  private static final long REQUEST_INTERVAL = Simulation.MILLISECOND*1000*600;   // Send request every 5 minutes
   private static final long ATTEST_INTERVAL = TRANSMISSION_DURATION*2;          // How long to wait before combining attestation signatures (~5)
   private static final long MOTE_OFFSET = Simulation.MILLISECOND*1000;           // Each motes request will be offset by this time
   private static final long MS = Simulation.MILLISECOND;

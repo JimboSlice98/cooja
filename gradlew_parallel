@@ -86,8 +86,14 @@ GRADLE_USER_HOME=$(mktemp -d /tmp/gradle-user-home.XXXXXX)
 # Set a unique project cache directory to avoid lock conflicts
 PROJECT_CACHE_DIR=$(mktemp -d /tmp/gradle-project-cache.XXXXXX)
 
+# Set a unique build directory to avoid conflicts
+BUILD_DIR=$(mktemp -d /tmp/gradle-build-dir.XXXXXX)
+
+# Copy everything from APP_HOME to the unique build directory
+cp -r "$APP_HOME/"* "$BUILD_DIR" 2>/dev/null
+
 # Ensure the temporary directories are cleaned up after the script exits
-trap "rm -rf $GRADLE_USER_HOME $PROJECT_CACHE_DIR" EXIT
+trap "rm -rf $GRADLE_USER_HOME $PROJECT_CACHE_DIR $BUILD_DIR" EXIT
 
 if "$cygwin" || "$msys" ; then
     APP_HOME=$( cygpath --path --mixed "$APP_HOME" )
@@ -113,12 +119,14 @@ fi
 
 DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
 
-# Set Gradle command line arguments, including the unique project cache directory
+# Set Gradle command line arguments, including the unique project cache directory and build directory
 set -- \
         "-Dorg.gradle.appname=$APP_BASE_NAME" \
         -classpath "$CLASSPATH" \
         org.gradle.wrapper.GradleWrapperMain \
         --project-cache-dir "$PROJECT_CACHE_DIR" \
+        --no-daemon \
+        -p "$BUILD_DIR" \
         "$@"
 
 if ! command -v xargs >/dev/null 2>&1
@@ -132,5 +140,8 @@ eval "set -- $(
         sed ' s~[^-[:alnum:]+,./:=@_]~\\&~g; ' |
         tr '\n' ' '
     )" '"$@"'
+
+# Set the GRADLE_USER_HOME environment variable
+export GRADLE_USER_HOME
 
 exec "$JAVACMD" "$@"

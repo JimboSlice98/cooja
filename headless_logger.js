@@ -1,4 +1,4 @@
-TIMEOUT(590000);
+TIMEOUT(200000);
 
 function formatTime(microseconds) {
     let milliseconds = Math.floor(microseconds / 1000);
