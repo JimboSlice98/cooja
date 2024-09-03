@@ -28,6 +28,10 @@ public class Peer2PeerMote extends AbstractApplicationMote {
   private ApplicationRadio radio;
   private Random rd;
 
+  private static final Random commonRd = new Random();
+  private static int chosenStartMoteID = -1;
+  private static boolean isInitialized = false;
+
   private static final long TRANSMISSION_DURATION = Simulation.MICROSECOND*300;  // Packet broadcast time: 300 μs
   private static final long SEND_INTERVAL = Simulation.MILLISECOND*1000*600;      // Send request every 60 seconds
   private static final long REQUEST_INTERVAL = Simulation.MILLISECOND*1000*60;   // Send request every 60 seconds
@@ -66,11 +70,18 @@ public class Peer2PeerMote extends AbstractApplicationMote {
       rd = getSimulation().getRandomGenerator();
     }
 
-    if (getID() == 1) {
-      schedulePeriodicPacket(-SEND_INTERVAL + 1000*MS);
+    // Initialize random number only once across all motes
+    if (!isInitialized) {      
+      chosenStartMoteID = commonRd.nextInt(1, getSimulation().getMotesCount() + 1);
+      isInitialized = true;
     }
 
-    // schedulePeriodicPacket(1000*MS*getID());
+    // All motes check if they are the chosen one
+    if (getID() == chosenStartMoteID) {
+      schedulePeriodicPacket(-SEND_INTERVAL + 1000 * MS);
+    }
+
+    // schedulePeriodicPacket(-SEND_INTERVAL + 1000*MS*getID());
   }
 
   
@@ -101,7 +112,7 @@ public class Peer2PeerMote extends AbstractApplicationMote {
       int fromNode = Integer.parseInt(parts[4]);
 
       String messageID = messageNum + "|" + originNode + "|" + attestNode;
-      String logMsg = "Rx: '" + messageID + "|" + messageData + "' from node: '" + fromNode + "'";
+      String logMsg = "Rx: '" + messageID + "' from node: '" + fromNode + "'";
       // logf(logMsg, null);
 
       int processingDelay = generateRandomDelay(PROCESS_DELAY_MEAN, PROCESS_DELAY_UNCERTAINTY);
@@ -112,9 +123,6 @@ public class Peer2PeerMote extends AbstractApplicationMote {
         // logf(logMsg, "duplicate", null);
         return;
       } else {
-        if (attestNode == 0) {
-          logf(logMsg, null);
-        }
         messageCache.put(messageID, messageData);
       }
       
@@ -124,7 +132,7 @@ public class Peer2PeerMote extends AbstractApplicationMote {
         return;
       }
       else if (attestNode != 0) {
-        logf(logMsg, "attestation received");
+        logf(logMsg, "ATTESTATION RECEIVED");
         return;
       }
       
@@ -173,7 +181,7 @@ public class Peer2PeerMote extends AbstractApplicationMote {
       switch (action) {
         case BROADCAST_MESSAGE:
           messageData = getSimulation().getSimulationTime();
-          logf("Tx: " + "'" + messageID + "'", null);
+          logf("Tx: " + "'" + messageID + "'", "REQUEST");
           messageCache.put(messageID, messageData);
           txCount++;
           break;

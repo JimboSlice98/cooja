@@ -34,9 +34,13 @@ public class Peer2PeerMoteBLS extends AbstractApplicationMote {
   private Set<String> messageCache = new HashSet<>();
   private long txCount = 0;
 
+  private static final Random commonRd = new Random();
+  private static int chosenStartMoteID = -1;
+  private static boolean isInitialized = false;
+
   private static final long TRANSMISSION_DURATION = Simulation.MICROSECOND*300;  // Packet broadcast time: 300 μs
   private static final long REQUEST_INTERVAL = Simulation.MILLISECOND*1000*60;   // Send request every 5 minutes
-  private static final long ATTEST_INTERVAL = TRANSMISSION_DURATION*20;          // How long to wait before combining attestation signatures (~5)
+  private static final long ATTEST_INTERVAL = TRANSMISSION_DURATION*2;          // How long to wait before combining attestation signatures (~5)
   private static final long MOTE_OFFSET = Simulation.MILLISECOND*1000;           // Each motes request will be offset by this time
   private static final long MS = Simulation.MILLISECOND;
   private static final long US = Simulation.MICROSECOND;
@@ -71,10 +75,18 @@ public class Peer2PeerMoteBLS extends AbstractApplicationMote {
       radio = (ApplicationRadio) getInterfaces().getRadio();
       rd = getSimulation().getRandomGenerator();
     }
-      
-    if (getID() == 1) {
-      schedulePeriodicPacket(REQUEST_INTERVAL, -REQUEST_INTERVAL + MS*1000*getID(), Type.REQUEST);  
+
+    // Initialize random number only once across all motes
+    if (!isInitialized) {      
+      chosenStartMoteID = commonRd.nextInt(1, getSimulation().getMotesCount() + 1);
+      isInitialized = true;
     }
+
+    // All motes check if they are the chosen one
+    if (getID() == chosenStartMoteID) {
+      schedulePeriodicPacket(REQUEST_INTERVAL, -REQUEST_INTERVAL + MS*1000, Type.REQUEST);
+    }
+
     // schedulePeriodicPacket(REQUEST_INTERVAL, -REQUEST_INTERVAL + MS*1000*getID(), Type.REQUEST);
     schedulePeriodicPacket(ATTEST_INTERVAL, -ATTEST_INTERVAL, Type.ATTESTATION);
     scheduleCacheRefresh();
@@ -224,9 +236,9 @@ public class Peer2PeerMoteBLS extends AbstractApplicationMote {
 
           radio.startTransmittingPacket(new COOJARadioPacket((dataHolder.data + "," + getID()).getBytes(StandardCharsets.UTF_8)), TRANSMISSION_DURATION);
           
-          if (messageType == Type.REQUEST) {
-            scheduleBroadcastPacket(data, ttl - 1, 100, messageType);
-          }
+          // if (messageType == Type.REQUEST) {
+          //   scheduleBroadcastPacket(data, ttl - 1, 100, messageType);
+          // }
 
         } else {
           scheduleBroadcastPacket(dataHolder.data, ttl, 100, messageType);

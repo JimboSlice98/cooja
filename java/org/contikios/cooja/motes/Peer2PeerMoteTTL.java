@@ -28,8 +28,12 @@ public class Peer2PeerMoteTTL extends AbstractApplicationMote {
   private ApplicationRadio radio;
   private Random rd;
 
+  private static final Random commonRd = new Random();
+  private static int chosenStartMoteID = -1;
+  private static boolean isInitialized = false;
+
   private static final long TRANSMISSION_DURATION = Simulation.MICROSECOND*300;  // Packet broadcast time: 300 μs
-  private static final long SEND_INTERVAL = Simulation.MILLISECOND*1000*60;      // Send request every 60 seconds
+  private static final long SEND_INTERVAL = Simulation.MILLISECOND*1000*600;      // Send request every 60 seconds
   private static final long REQUEST_INTERVAL = Simulation.MILLISECOND*1000*60;   // Send request every 60 seconds
   
   private static final long MOTE_OFFSET = Simulation.MILLISECOND*1000;           // Each motes request will be offset by this time
@@ -39,11 +43,11 @@ public class Peer2PeerMoteTTL extends AbstractApplicationMote {
   private static final int PROCESS_DELAY_MEAN = 600;
   private static final int PROCESS_DELAY_UNCERTAINTY = 500;
 
-  private static final int TTL = 8;
   private static final int LOG_LENGTH = 40;
   private static final int LOGTIME_LENGTH = 20;
   private static final int ACTION_LENGTH = 30;
 
+  private int TTL;
   private long txCount = 0;
   private Map<String, String> messageCache = new HashMap<>();
 
@@ -64,13 +68,21 @@ public class Peer2PeerMoteTTL extends AbstractApplicationMote {
     if (radio == null) {
       radio = (ApplicationRadio) getInterfaces().getRadio();
       rd = getSimulation().getRandomGenerator();
+      TTL = (int)Math.cbrt(getSimulation().getMotesCount()) + 1;
     }
 
-    if (getID() == 1) {
-      schedulePeriodicPacket(-SEND_INTERVAL + 1000*MS);
+    // Initialize random number only once across all motes
+    if (!isInitialized) {
+      chosenStartMoteID = commonRd.nextInt(1, getSimulation().getMotesCount() + 1);
+      isInitialized = true;
     }
 
-    // schedulePeriodicPacket(1000*MS*getID());
+    // All motes check if they are the chosen one
+    if (getID() == chosenStartMoteID) {
+      schedulePeriodicPacket(-SEND_INTERVAL + 1000 * MS);
+    }
+
+    // schedulePeriodicPacket(-SEND_INTERVAL + 1000*MS*getID());
   }
 
   
@@ -101,15 +113,11 @@ public class Peer2PeerMoteTTL extends AbstractApplicationMote {
       int fromNode = Integer.parseInt(parts[4]);
 
       String messageID = messageNum + "|" + originNode + "|" + attestNode;
-      String logMsg = "Rx: '" + messageID + "' from node: '" + fromNode + "' with ttl: '" + ttl + "'";
+      String logMsg = "Rx: '" + messageID + "' from node: '" + fromNode + "'";
       // logf(logMsg, null);
 
       int processingDelay = generateRandomDelay(PROCESS_DELAY_MEAN, PROCESS_DELAY_UNCERTAINTY);
-      processingDelay = 0;
-
-      if (attestNode == 0) {
-        // logf(logMsg, null);
-      }
+      // processingDelay = 0;
       
       if (attestNode != 0 && originNode != getID()) {        
         scheduleBroadcastPacket(messageID, ttl, processingDelay, Action.RELAY_ATTESTATION);
@@ -120,14 +128,21 @@ public class Peer2PeerMoteTTL extends AbstractApplicationMote {
         }
         else {
           messageCache.put(messageID, "0");
-          logf(logMsg, "attestation received");
+          logf(logMsg, "ATTESTATION RECEIVED");
         }
         return;        
       }
       
       // Handle incomming messages and generate attestation
       scheduleBroadcastPacket(messageID, ttl, processingDelay, Action.RELAY_MESSAGE);
-      scheduleBroadcastPacket(messageNum + "|" + originNode + "|" + getID(), TTL, processingDelay, Action.BROADCAST_ATTESTATION);
+
+      String attestationID = messageNum + "|" + originNode + "|" + getID();
+
+      if (!messageCache.containsKey(attestationID)) {
+        scheduleBroadcastPacket(messageNum + "|" + originNode + "|" + getID(), TTL, processingDelay, Action.BROADCAST_ATTESTATION);
+        messageCache.put(attestationID, "0");
+        // logf("Making attestation and broadcasting", null);
+      }
 
     } catch (NumberFormatException e) {
       System.out.println("Mote " + getID() + " received bad data: " + e);
@@ -149,6 +164,7 @@ public class Peer2PeerMoteTTL extends AbstractApplicationMote {
   private void scheduleBroadcastPacket(String messageID, int ttl, int timeOffset, Action action) {
     if (ttl <= 0) {
       // System.out.println(formatTimeMicro(getSimulation().getSimulationTime()) + "  ID " + getID() + ": TTL expired for " + messageID);
+      // logf("TTL expired for message: " + messageID, null);
       return;
     }
   
@@ -169,7 +185,7 @@ public class Peer2PeerMoteTTL extends AbstractApplicationMote {
       
       switch (action) {
         case BROADCAST_MESSAGE:
-          logf("Tx: " + "'" + messageID + "' with ttl: " + ttl + "'", null);
+          logf("Tx: " + "'" + messageID + "'", "REQUEST");
           txCount++;
           break;
         
