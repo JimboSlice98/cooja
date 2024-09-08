@@ -8,8 +8,6 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.Arrays;
 import java.util.Random;
-import java.util.Collections;
-
 import org.contikios.cooja.AbstractionLevelDescription;
 import org.contikios.cooja.COOJARadioPacket;
 import org.contikios.cooja.ClassDescription;
@@ -30,34 +28,35 @@ import org.contikios.cooja.interfaces.ApplicationRadio;
 public class Peer2PeerMote extends AbstractApplicationMote {
   private ApplicationRadio radio;
   private Random rd;
-  private Set<String> attestationBuffer = new HashSet<>();
-  private Set<String> messageCache = new HashSet<>();
-  private long txCount = 0;
+
+  private static final Random commonRd = new Random();
+  private static int chosenStartMoteID = -1;
+  private static boolean isInitialized = false;
 
   private static final long TRANSMISSION_DURATION = Simulation.MICROSECOND*300;  // Packet broadcast time: 300 μs
-  private static final long REQUEST_INTERVAL = Simulation.MILLISECOND*1000*60;   // Send request every 5 minutes
-  private static final long ATTEST_INTERVAL = TRANSMISSION_DURATION*10;          // How long to wait before combining attestation signatures (~5)
+  private static final long SEND_INTERVAL = Simulation.MILLISECOND*1000*600;      // Send request every 60 seconds
+  private static final long REQUEST_INTERVAL = Simulation.MILLISECOND*1000*60;   // Send request every 60 seconds
+  
   private static final long MOTE_OFFSET = Simulation.MILLISECOND*1000;           // Each motes request will be offset by this time
   private static final long MS = Simulation.MILLISECOND;
   private static final long US = Simulation.MICROSECOND;
 
-  private static final int MAX_RETRIES = 10;
-  private static final int MAX_CHANNELS = 3;
+  private static final int PROCESS_DELAY_MEAN = 600;
+  private static final int PROCESS_DELAY_UNCERTAINTY = 500;
+
+  private static final int TTL = 1000;
   private static final int LOG_LENGTH = 40;
   private static final int LOGTIME_LENGTH = 25;
   private static final int ACTION_LENGTH = 30;
-  
-  public enum Type {
-    REQUEST,
-    RELAY,
-    ATTESTATION
-  }
 
-  public class DataHolder {
-    public String data;
-    public DataHolder(String data) {
-      this.data = data;
-    }
+  private long txCount = 0;
+  private Map<String, Long> messageCache = new HashMap<>();
+
+  public enum Action {
+    BROADCAST_MESSAGE,
+    BROADCAST_ATTESTATION,
+    RELAY_MESSAGE,
+    RELAY_ATTESTATION
   }
 
 
@@ -71,46 +70,22 @@ public class Peer2PeerMote extends AbstractApplicationMote {
       radio = (ApplicationRadio) getInterfaces().getRadio();
       rd = getSimulation().getRandomGenerator();
     }
-        
-    schedulePeriodicPacket(REQUEST_INTERVAL, MS*1000*getID(), Type.REQUEST);
-    schedulePeriodicPacket(ATTEST_INTERVAL, 0, Type.ATTESTATION);
-    scheduleCacheRefresh();
-  }
 
-
-  private void schedulePeriodicPacket(long sendInterval, long timeOffset, Type messageType) {
-    getSimulation().scheduleEvent(new MoteTimeEvent(this) {
-      @Override
-      public void execute(long t) {
-        String data = "";
-        if (messageType == Type.REQUEST) {
-          data = generatePacketData(messageType);
-        }
-        scheduleBroadcastPacket(data, MAX_RETRIES, 0, messageType);
-        schedulePeriodicPacket(sendInterval, 0, messageType);
-      }
-    }, getSimulation().getSimulationTime() + sendInterval + timeOffset);
-  }
-
-
-  private String generatePacketData(Type messageType) {
-    String data = "";
-    switch (messageType) {
-      case REQUEST:
-        data = txCount + "|" + getID() + "|" + 0;
-        break;
-
-      case ATTESTATION:
-        if (!attestationBuffer.isEmpty()) {
-          data = String.join(",", attestationBuffer);
-          attestationBuffer.clear();
-        }
-        break;
+    // Initialize random number only once across all motes
+    if (!isInitialized) {      
+      chosenStartMoteID = commonRd.nextInt(1, getSimulation().getMotesCount() + 1);
+      isInitialized = true;
     }
-    return data;
+
+    // All motes check if they are the chosen one
+    if (getID() == chosenStartMoteID) {
+      schedulePeriodicPacket(-SEND_INTERVAL + 1000 * MS);
+    }
+
+    // schedulePeriodicPacket(-SEND_INTERVAL + 1000*MS*getID());
   }
 
-
+  
   private void scheduleCacheRefresh() {
     getSimulation().scheduleEvent(new MoteTimeEvent(this) {
       @Override
@@ -136,40 +111,41 @@ public class Peer2PeerMote extends AbstractApplicationMote {
         continue;
       }
 
-      try {
-        long messageNum = Long.parseLong(parts[0]);
-        int originNode = Integer.parseInt(parts[1]);
-        int attestNode = Integer.parseInt(parts[2]);
-        String messageID = messageNum + "|" + originNode + "|" + attestNode;        
+    try {
+      long messageNum = Long.parseLong(parts[0]);
+      int originNode = Integer.parseInt(parts[1]);
+      int attestNode = Integer.parseInt(parts[2]);
+      long messageData = Long.parseLong(parts[3]);
+      int fromNode = Integer.parseInt(parts[4]);
+
+      String messageID = messageNum + "|" + originNode + "|" + attestNode;
+      String logMsg = "Rx: '" + messageID + "' from node: '" + fromNode + "'";
+      // logf(logMsg, null);
+
+      int processingDelay = generateRandomDelay(PROCESS_DELAY_MEAN, PROCESS_DELAY_UNCERTAINTY);
+      processingDelay = 0;
+
+      // Handle duplicate packets
+      if (messageCache.containsKey(messageID)) {
+        // logf(logMsg, "duplicate", null);
+        return;
+      } else {
+        messageCache.put(messageID, messageData);
+      }
       
-        // Handle duplicate packets
-        if (messageCache.contains(messageID)) {
-          // logf(logMessage, "DUPLICATE", null);
-          continue;
-        }
-        
-        messageCache.add(messageID);
-        String logMessage = "Rx: '" + messageID + "' from node: '" + fromNode + "'";
-
-        // Handle incoming attestations
-        if (attestNode != 0 && originNode != getID()) {        
-          attestationBuffer.add(messageID);
-          // logf(logMessage, null, null);
-          continue;
-        } else if (attestNode != 0) {
-          logf(logMessage, "ATTESTATION RECEIVED", null);
-          continue;
-        }
-
-        // logf(logMessage, null, null);
-        
-        // Handle incoming requests
-        scheduleBroadcastPacket(messageID, 0, 0, Type.RELAY);
-
-        // Generate attestation
-        String attestationID = messageNum + "|" + originNode + "|" + getID();
-        attestationBuffer.add(attestationID);        
-        messageCache.add(attestationID);
+      // Handle incomming attestations
+      if (attestNode != 0 && originNode != getID()) {        
+        scheduleBroadcastPacket(messageID, messageData, TTL, processingDelay, Action.RELAY_ATTESTATION);
+        return;
+      }
+      else if (attestNode != 0) {
+        logf(logMsg, "ATTESTATION RECEIVED");
+        return;
+      }
+      
+      // Handle incomming messages and generate attestation
+      scheduleBroadcastPacket(messageID, messageData, TTL, processingDelay, Action.RELAY_MESSAGE);
+      scheduleBroadcastPacket(messageNum + "|" + originNode + "|" + getID(), 0, TTL, processingDelay, Action.BROADCAST_ATTESTATION);
 
       } catch (NumberFormatException e) {
         System.out.println("Mote " + getID() + " received bad data: " + e);
@@ -188,48 +164,58 @@ public class Peer2PeerMote extends AbstractApplicationMote {
     getSimulation().scheduleEvent(new MoteTimeEvent(this) {
       @Override
       public void execute(long t) {
-        if (!radio.isTransmitting() && !radio.isReceiving() && !radio.isInterfered()) {
-          switch (messageType) {
-            case REQUEST:
-              logf("Tx: " + "'" + dataHolder.data + "'", messageType.toString(), null);
-              messageCache.add(dataHolder.data);
-              txCount++;
-              break;
-
-            case RELAY:
-              // logf("Tx: " + "'" + dataHolder.data + "'", messageType.toString(), ttl);
-              break;
-
-            case ATTESTATION:
-              dataHolder.data = generatePacketData(messageType);
-              // logf("Tx: '" + dataHolder.data + "'", messageType.toString(), ttl);
-              break;
-          }
-
-          radio.startTransmittingPacket(new COOJARadioPacket((dataHolder.data + "," + getID()).getBytes(StandardCharsets.UTF_8)), TRANSMISSION_DURATION);
-          
-          if (messageType == Type.REQUEST) {
-            scheduleBroadcastPacket(data, ttl - 1, 100, messageType);
-          }
-
-        } else {
-          scheduleBroadcastPacket(dataHolder.data, ttl, 100, messageType);
+        if (!attemptBroadcast(messageID, messageData, ttl, action)) {
+          // logf("Fx: '" + messageID + "|" + messageData, "rescheduled");
+          scheduleBroadcastPacket(messageID, messageData, ttl, 100, action);
         }
       }
     }, getSimulation().getSimulationTime() + timeOffset * US);
   }
  
   
-  private void logf(String logMessage, String actionMsg, Integer channel) {
+  private boolean attemptBroadcast(String messageID, long messageData, int ttl, Action action) {    
+    if (!radio.isTransmitting() && !radio.isReceiving() && !radio.isInterfered()) {
+      
+      switch (action) {
+        case BROADCAST_MESSAGE:
+          messageData = getSimulation().getSimulationTime();
+          logf("Tx: " + "'" + messageID + "'", "REQUEST");
+          messageCache.put(messageID, messageData);
+          txCount++;
+          break;
+        
+        case BROADCAST_ATTESTATION:
+          messageData = getSimulation().getSimulationTime();
+          // logf("Ax: '" + messageID + "|" + messageData, null);
+          messageCache.put(messageID, messageData);
+          break;
+    
+        case RELAY_MESSAGE:
+        case RELAY_ATTESTATION:
+          // logf("Bx: '" + messageID + "|" + messageData, action.toString().replace("_", " ").toLowerCase());
+          break;
+    
+        default:
+          System.out.println("handleBroadcastAction() error");
+      }
+    
+      radio.startTransmittingPacket(new COOJARadioPacket((messageID + "|" + messageData + "|" + getID()).getBytes(StandardCharsets.UTF_8)), TRANSMISSION_DURATION);
+      return true;
+    }
+    return false;
+  }
+  
+  
+  private void logf(String logMsg, String actionMsg) {
     String log;
     if (actionMsg != null) {
       log = String.format("%-" + LOG_LENGTH + "s", logMessage) + " -> " + actionMsg;
     } else {
       log = String.format("%-" + (LOG_LENGTH + ACTION_LENGTH) + "s", logMessage);
     }
-    if (channel != null) {
-      log = String.format("%-" + (LOG_LENGTH + ACTION_LENGTH) + "s", log) + " Channel: " + channel;
-    }
+    // if (channel != null) {
+    //   log = String.format("%-" + (LOG_LENGTH + ACTION_LENGTH) + "s", log) + " Channel: " + channel;
+    // }
     log(log);
     System.out.println(
       String.format(

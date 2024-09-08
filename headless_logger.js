@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 TIMEOUT(650000);
+=======
+TIMEOUT(200000);
+>>>>>>> single-channel-no-bls-chaining
 
 function formatTime(microseconds) {
     let milliseconds = Math.floor(microseconds / 1000);

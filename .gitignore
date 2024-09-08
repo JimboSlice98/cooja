@@ -6,3 +6,8 @@ build
 /dist
 /javadoc
 /bin
+<<<<<<< HEAD
+=======
+COOJA.testlog
+*.hprof
+>>>>>>> single-channel-no-bls-chaining
