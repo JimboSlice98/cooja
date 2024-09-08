@@ -26,7 +26,7 @@ import org.contikios.cooja.interfaces.ApplicationRadio;
  * @author James Helsby
  */
 
-public class Peer2PeerMoteBLS extends AbstractApplicationMote {
+public class Peer2PeerMoteBLSoptimised extends AbstractApplicationMote {
   private ApplicationRadio radio;
   private Random rd;
   private Set<String> attestationBuffer = new HashSet<>();
@@ -39,7 +39,7 @@ public class Peer2PeerMoteBLS extends AbstractApplicationMote {
 
   private static final long TRANSMISSION_DURATION = Simulation.MICROSECOND*300;  // Packet broadcast time: 300 μs
   private static final long REQUEST_INTERVAL = Simulation.MILLISECOND*1000*600;   // Send request every 5 minutes
-  private static final long ATTEST_INTERVAL = TRANSMISSION_DURATION*500;          // How long to wait before combining attestation signatures (~5)
+  private static final long ATTEST_INTERVAL = TRANSMISSION_DURATION*10;          // How long to wait before combining attestation signatures (~5)
   private static final long MOTE_OFFSET = Simulation.MILLISECOND*1000;           // Each motes request will be offset by this time
   private static final long MS = Simulation.MILLISECOND;
   private static final long US = Simulation.MICROSECOND;
@@ -56,8 +56,15 @@ public class Peer2PeerMoteBLS extends AbstractApplicationMote {
     ATTESTATION
   }
 
+  public class DataHolder {
+    public String data;
+    public DataHolder(String data) {
+      this.data = data;
+    }
+  }
 
-  public Peer2PeerMoteBLS(MoteType moteType, Simulation simulation) throws MoteType.MoteTypeCreationException {
+
+  public Peer2PeerMoteBLSoptimised(MoteType moteType, Simulation simulation) throws MoteType.MoteTypeCreationException {
     super(moteType, simulation);
   }
   
@@ -89,7 +96,11 @@ public class Peer2PeerMoteBLS extends AbstractApplicationMote {
     getSimulation().scheduleEvent(new MoteTimeEvent(this) {
       @Override
       public void execute(long t) {
-        scheduleBroadcastPacket(generatePacketData(messageType), MAX_RETRIES, 0, messageType);
+        String data = "";
+        if (messageType == Type.REQUEST) {
+          data = generatePacketData(messageType);
+        }
+        scheduleBroadcastPacket(data, MAX_RETRIES, 0, messageType);
         schedulePeriodicPacket(sendInterval, 0, messageType);
       }
     }, getSimulation().getSimulationTime() + sendInterval + timeOffset);
@@ -195,9 +206,11 @@ public class Peer2PeerMoteBLS extends AbstractApplicationMote {
 
 
   private void scheduleBroadcastPacket(String data, int ttl, int timeOffset, Type messageType) {
-    if (ttl < 0 || data == "") {
+    if (ttl < 0 || (messageType == Type.ATTESTATION && attestationBuffer.isEmpty())) {
       return;
     }
+
+    final DataHolder dataHolder = new DataHolder(data);
 
     getSimulation().scheduleEvent(new MoteTimeEvent(this) {
       @Override
@@ -205,8 +218,8 @@ public class Peer2PeerMoteBLS extends AbstractApplicationMote {
         if (!radio.isTransmitting() && !radio.isReceiving() && !radio.isInterfered()) {
           switch (messageType) {
             case REQUEST:
-              logf("Tx: " + "'" + data + "'", messageType.toString(), null);
-              messageCache.add(data);
+              logf("Tx: " + "'" + dataHolder.data + "'", messageType.toString(), null);
+              messageCache.add(dataHolder.data);
               txCount++;
               break;
 
@@ -215,18 +228,19 @@ public class Peer2PeerMoteBLS extends AbstractApplicationMote {
               break;
 
             case ATTESTATION:
+              dataHolder.data = generatePacketData(messageType);
               // logf("Tx: '" + dataHolder.data + "'", messageType.toString(), ttl);
               break;
           }
 
-          radio.startTransmittingPacket(new COOJARadioPacket((data + "," + getID()).getBytes(StandardCharsets.UTF_8)), TRANSMISSION_DURATION);
+          radio.startTransmittingPacket(new COOJARadioPacket((dataHolder.data + "," + getID()).getBytes(StandardCharsets.UTF_8)), TRANSMISSION_DURATION);
           
           // if (messageType == Type.REQUEST) {
           //   scheduleBroadcastPacket(data, ttl - 1, 100, messageType);
           // }
 
         } else {
-          scheduleBroadcastPacket(data, ttl, 100, messageType);
+          scheduleBroadcastPacket(dataHolder.data, ttl, 100, messageType);
         }
       }
     }, getSimulation().getSimulationTime() + timeOffset * US);

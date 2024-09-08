@@ -2,6 +2,7 @@
 
 app_path=$0
 
+# Resolve symbolic links to get the actual application path
 while
     APP_HOME=${app_path%"${app_path##*/}"}
     [ -h "$app_path" ]
@@ -43,6 +44,7 @@ esac
 
 CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
 
+# Determine the Java command to use to start the JVM
 if [ -n "$JAVA_HOME" ] ; then
     if [ -x "$JAVA_HOME/jre/sh/java" ] ; then
         JAVACMD=$JAVA_HOME/jre/sh/java
@@ -66,6 +68,7 @@ location of your Java installation."
     fi
 fi
 
+# Increase the maximum file descriptors if possible
 if ! "$cygwin" && ! "$darwin" && ! "$nonstop" ; then
     case $MAX_FD in 
       max*)
@@ -80,22 +83,21 @@ if ! "$cygwin" && ! "$darwin" && ! "$nonstop" ; then
     esac
 fi
 
-# Set a unique Gradle user home directory to avoid lock conflicts
-GRADLE_USER_HOME=$(mktemp -d /tmp/gradle-user-home.XXXXXX)
-
-# Set a unique project cache directory to avoid lock conflicts
-PROJECT_CACHE_DIR=$(mktemp -d /tmp/gradle-project-cache.XXXXXX)
-
-# Reuse or create a unique build directory
+# Set or reuse directories in /tmp
+GRADLE_USER_HOME="/tmp/gradle-user-home-$(hostname)"
+PROJECT_CACHE_DIR="/tmp/gradle-project-cache-$(hostname)"
 BUILD_DIR="/tmp/gradle-build-dir-$(hostname)"
-if [ ! -d "$BUILD_DIR" ]; then
-    # Copy everything from APP_HOME to the unique build directory only once
-    mkdir -p "$BUILD_DIR"
-    cp -r "$APP_HOME/"* "$BUILD_DIR" 2>/dev/null
-fi
 
-# Ensure the temporary directories are cleaned up after the script exits
-trap "rm -rf $GRADLE_USER_HOME $PROJECT_CACHE_DIR" EXIT
+[ ! -d "$GRADLE_USER_HOME" ] && mkdir -p "$GRADLE_USER_HOME" && echo "Created new Gradle user home at $GRADLE_USER_HOME" || echo "Reusing existing Gradle user home at $GRADLE_USER_HOME"
+[ ! -d "$PROJECT_CACHE_DIR" ] && mkdir -p "$PROJECT_CACHE_DIR" && echo "Created new Gradle project cache at $PROJECT_CACHE_DIR" || echo "Reusing existing Gradle project cache at $PROJECT_CACHE_DIR"
+
+# Always copy the build directory
+rm -rf "$BUILD_DIR"
+mkdir -p "$BUILD_DIR"
+cp -r "$APP_HOME/"* "$BUILD_DIR" 2>/dev/null
+echo "Copied build files to new build directory at $BUILD_DIR"
+
+trap "" EXIT
 
 if "$cygwin" || "$msys" ; then
     APP_HOME=$( cygpath --path --mixed "$APP_HOME" )
@@ -121,13 +123,15 @@ fi
 
 DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
 
-# Set Gradle command line arguments, including the unique project cache directory and build directory
+# Build the project
+./gradlew --project-cache-dir "$PROJECT_CACHE_DIR" --gradle-user-home "$GRADLE_USER_HOME" build
+
 set -- \
         "-Dorg.gradle.appname=$APP_BASE_NAME" \
         -classpath "$CLASSPATH" \
         org.gradle.wrapper.GradleWrapperMain \
         --project-cache-dir "$PROJECT_CACHE_DIR" \
-        --no-daemon \
+        --daemon \
         -p "$BUILD_DIR" \
         "$@"
 
@@ -142,6 +146,9 @@ eval "set -- $(
         sed ' s~[^-[:alnum:]+,./:=@_]~\\&~g; ' |
         tr '\n' ' '
     )" '"$@"'
+
+# Debug: Print Classpath
+echo "Classpath: $CLASSPATH"
 
 # Set the GRADLE_USER_HOME environment variable
 export GRADLE_USER_HOME
